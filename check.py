@@ -10,14 +10,17 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 
 URL = ("https://www.nintendo.com/us/store/products/"
        "nintendo-switch-2-the-legend-of-zelda-40th-anniversary-edition-121642/")
 STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
-FAIL_ALERT_AT = 6        # ~30 min of failed checks at a 5-min schedule
-FAIL_REPEAT_EVERY = 144  # then remind about every ~12 h while still failing
+CHECKS = int(os.environ.get("CHECKS", "1"))         # checks per run (scheduled runs do 3)
+INTERVAL = int(os.environ.get("INTERVAL_SEC", "180"))  # 3 min between checks in one run
+FAIL_ALERT_AT = 10       # ~30 min of failed checks
+FAIL_REPEAT_EVERY = 240  # then remind about every ~12 h while still failing
 
 IN_STOCK = ("InStock", "LimitedAvailability", "PreOrder", "OnlineOnly", "BackOrder", "PreSale")
 OUT = ("OutOfStock", "SoldOut", "Discontinued")
@@ -93,17 +96,23 @@ def main():
         print("::warning::Test message not delivered to Telegram.")
 
     st = load_state()
+    for i in range(CHECKS):
+        if i:
+            time.sleep(INTERVAL)
+        check_once(st)
+
+
+def check_once(st):
     try:
         status, err = classify(fetch()), None
     except Exception as e:  # network error, 403, timeout...
         status, err = "unknown", str(e)[:150]
-    print(f"status={status}" + (f" error={err}" if err else ""))
+    print(time.strftime("%H:%M:%S UTC ", time.gmtime()) + f"status={status}" + (f" error={err}" if err else ""), flush=True)
 
     if status == "in":
         st.update(fails=0, last="in")
         save_state(st)
         alert("DISPONIBLE: Nintendo Switch 2 Zelda 40th Anniversary Edition parece estar EN STOCK.\n" + URL)
-        return
     if status == "out":
         st.update(fails=0, last="out")
         save_state(st)
@@ -115,7 +124,7 @@ def main():
     n = st["fails"]
     if n == FAIL_ALERT_AT or (n > FAIL_ALERT_AT and (n - FAIL_ALERT_AT) % FAIL_REPEAT_EVERY == 0):
         alert("Aviso: el chequeo de stock de Switch 2 Zelda (GitHub) no puede leer la pagina de Nintendo "
-                 f"hace {n} intentos ({err or 'sin dato de disponibilidad'}). Revisa manualmente:\n" + URL)
+              f"hace {n} intentos ({err or 'sin dato de disponibilidad'}). Revisa manualmente:\n" + URL)
 
 
 if __name__ == "__main__":
