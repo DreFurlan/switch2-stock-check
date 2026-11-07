@@ -13,14 +13,10 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: stock-check
-  cancel-in-progress: false
-
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +32,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TEST_ALERT: ${{ inputs.test_alert }}
+          # Scheduled runs (every 5 min) check 3 times, 3 min apart -> about one check every 3 min.
+          CHECKS: ${{ github.event_name == 'schedule' && '3' || '1' }}
         run: python3 check.py
 
       - name: Save state
