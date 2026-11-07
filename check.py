@@ -2,7 +2,7 @@
 """Switch 2 Zelda 40th Anniversary stock check, run by GitHub Actions.
 
 Reads schema.org availability from the Nintendo Store page and messages Dre on
-Telegram when it looks purchasable, or when the check keeps failing (so a dead
+Telegram (and via a failed GitHub run, which GitHub emails/pushes) when it looks purchasable, or when the check keeps failing (so a dead
 watcher is never silent). Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
 State (failure counter) lives in state.json, carried between runs by actions/cache.
 """
@@ -61,24 +61,36 @@ def classify(html):
 
 
 def telegram(text):
+    """Send to Telegram when the secrets exist. Returns True if delivered."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat:
-        print("ERROR: missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secret; alert not sent.")
-        sys.exit(1)
-    data = urllib.parse.urlencode({"chat_id": chat, "text": text,
-                                   "disable_web_page_preview": "true"}).encode()
-    with urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
-                                data=data, timeout=20) as r:
-        ok = json.load(r).get("ok")
-    print("Telegram sent." if ok else "ERROR: Telegram did not accept the message.")
-    if not ok:
-        sys.exit(1)
+        print("Telegram not configured (TELEGRAM_BOT_TOKEN secret missing); using GitHub notification only.")
+        return False
+    try:
+        data = urllib.parse.urlencode({"chat_id": chat, "text": text,
+                                       "disable_web_page_preview": "true"}).encode()
+        with urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
+                                    data=data, timeout=20) as r:
+            ok = bool(json.load(r).get("ok"))
+    except Exception as e:
+        print(f"Telegram error: {str(e)[:150]}")
+        return False
+    print("Telegram sent." if ok else "Telegram did not accept the message.")
+    return ok
+
+
+def alert(text):
+    """Telegram if possible, then fail the run so GitHub emails/pushes Dre too."""
+    telegram(text)
+    print("::error title=Switch 2 Zelda::" + text.replace("\n", " "))
+    sys.exit(1)
 
 
 def main():
-    if os.environ.get("TEST_ALERT") == "true":
-        telegram("Prueba: el chequeo de stock de Switch 2 Zelda ya corre en GitHub (funciona con la PC apagada).")
+    if os.environ.get("TEST_ALERT") == "true" and not telegram(
+            "Prueba: el chequeo de stock de Switch 2 Zelda ya corre en GitHub (funciona con la PC apagada)."):
+        print("::warning::Test message not delivered to Telegram.")
 
     st = load_state()
     try:
@@ -90,7 +102,7 @@ def main():
     if status == "in":
         st.update(fails=0, last="in")
         save_state(st)
-        telegram("DISPONIBLE: Nintendo Switch 2 Zelda 40th Anniversary Edition parece estar EN STOCK.\n" + URL)
+        alert("DISPONIBLE: Nintendo Switch 2 Zelda 40th Anniversary Edition parece estar EN STOCK.\n" + URL)
         return
     if status == "out":
         st.update(fails=0, last="out")
@@ -102,7 +114,7 @@ def main():
     save_state(st)
     n = st["fails"]
     if n == FAIL_ALERT_AT or (n > FAIL_ALERT_AT and (n - FAIL_ALERT_AT) % FAIL_REPEAT_EVERY == 0):
-        telegram("Aviso: el chequeo de stock de Switch 2 Zelda (GitHub) no puede leer la pagina de Nintendo "
+        alert("Aviso: el chequeo de stock de Switch 2 Zelda (GitHub) no puede leer la pagina de Nintendo "
                  f"hace {n} intentos ({err or 'sin dato de disponibilidad'}). Revisa manualmente:\n" + URL)
 
 
